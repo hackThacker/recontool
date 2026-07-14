@@ -1,0 +1,59 @@
+# ── Binaries ──────────────────────────────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+recontool
+recontool.exe
+
+# ── Build output ──────────────────────────────────────────────────────────────
+/dist/
+/build/
+/bin/
+
+# ── Test binaries ─────────────────────────────────────────────────────────────
+*.test
+*.out
+
+# ── Go workspace ──────────────────────────────────────────────────────────────
+/vendor/
+go.work
+go.work.sum
+
+# ── Recon output folders (domain results) ─────────────────────────────────────
+# These are created at runtime when you run: recontool -d domain.com
+# Do NOT commit recon output to the repo
+*/subfinder.txt
+*/httpx.txt
+*/chaos.txt
+*/uncover.txt
+*/1xx.txt
+*/2xx.txt
+*/3xx.txt
+*/4xx.txt
+*/5xx.txt
+*/wayback_main.txt
+*/wayback_wildcard.txt
+*/wayback_specific.txt
+*/wayback_sensitive.txt
+
+# ── Temp / scratch files ──────────────────────────────────────────────────────
+test.txt
+*.tmp
+*.log
+*.bak
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── API keys / secrets ────────────────────────────────────────────────────────
+.env
+*.env
+provider-config.yaml
+config.yaml

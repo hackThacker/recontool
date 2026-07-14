@@ -1,14 +1,16 @@
 package main
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  wayback.go – Wayback Machine CDX API (4 search modes, native net/http)
+//  wayback.go – Wayback Machine CDX API (4 search modes, native net/http, concurrent)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import (
+	"bufio"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,7 +28,12 @@ type WaybackResult struct {
 	Sensitive []string
 }
 
-// RunWaybackCDX executes all 4 Wayback CDX queries for the domain.
+// Global, reused client to avoid socket exhaustion and overhead.
+var waybackClient = &http.Client{
+	Timeout: 300 * time.Second,
+}
+
+// RunWaybackCDX executes all 4 Wayback CDX queries for the domain concurrently.
 //
 //	1. Main domain    → url=www.domain/*
 //	2. Wildcard       → url=*.www.domain/*
@@ -37,67 +44,124 @@ func RunWaybackCDX(domain string) (WaybackResult, error) {
 	var res WaybackResult
 	base := "https://web.archive.org/cdx/search/cdx"
 
-	// ── 1. Main domain ──────────────────────────────────────────────────────
-	// https://web.archive.org/cdx/search/cdx?url=www.domain/*&collapse=urlkey&output=text&fl=original
 	q1 := base + "?url=www." + url.QueryEscape(domain) + "/*&collapse=urlkey&output=text&fl=original"
-	logInfo("[1/4] Main domain → " + q1)
-	v, err := cdxGet(q1)
-	if err != nil {
-		return res, fmt.Errorf("CDX main: %w", err)
-	}
-	res.Main = v
-	logOK(fmt.Sprintf("wayback_main.txt       → %d URLs", len(v)))
-
-	// ── 2. Wildcard domain ──────────────────────────────────────────────────
-	// https://web.archive.org/cdx/search/cdx?url=*.www.domain/*&collapse=urlkey&output=text&fl=original
 	q2 := base + "?url=*." + url.QueryEscape("www."+domain) + "/*&collapse=urlkey&output=text&fl=original"
-	logInfo("[2/4] Wildcard     → " + q2)
-	v, err = cdxGet(q2)
-	if err != nil {
-		return res, fmt.Errorf("CDX wildcard: %w", err)
-	}
-	res.Wildcard = v
-	logOK(fmt.Sprintf("wayback_wildcard.txt   → %d URLs", len(v)))
+	q3 := base + "?url=" + url.QueryEscape("https://www."+domain+"/en/*") + "&collapse=urlkey&output=text&fl=original"
+	q4 := base + "?url=*." + url.QueryEscape("www."+domain) + "/*&collapse=urlkey&output=text&fl=original&filter=original:.*\\.(" + sensitiveExts + ")$"
 
-	// ── 3. Specific path (/en/*) ─────────────────────────────────────────────
-	// https://web.archive.org/cdx/search/cdx?url=https://www.domain/en/*&collapse=urlkey&output=text&fl=original
-	q3 := base + "?url=" + url.QueryEscape("https://www."+domain+"/en/*") +
-		"&collapse=urlkey&output=text&fl=original"
-	logInfo("[3/4] Specific     → " + q3)
-	v, err = cdxGet(q3)
-	if err != nil {
-		return res, fmt.Errorf("CDX specific: %w", err)
-	}
-	res.Specific = v
-	logOK(fmt.Sprintf("wayback_specific.txt   → %d URLs", len(v)))
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errs []error
 
-	// ── 4. Sensitive file extensions ─────────────────────────────────────────
-	// filter=original:.*.(xls|xml|...etc)$
-	q4 := base + "?url=*." + url.QueryEscape("www."+domain) + "/*" +
-		"&collapse=urlkey&output=text&fl=original" +
-		"&filter=original:.*\\.(" + sensitiveExts + ")$"
-	logInfo("[4/4] Sensitive    → " + q4)
-	v, err = cdxGet(q4)
-	if err != nil {
-		return res, fmt.Errorf("CDX sensitive: %w", err)
+	var mainURLs []string
+	var wildcardURLs []string
+	var specificURLs []string
+	var sensitiveURLs []string
+
+	addError := func(err error) {
+		mu.Lock()
+		errs = append(errs, err)
+		mu.Unlock()
 	}
-	res.Sensitive = v
-	logOK(fmt.Sprintf("wayback_sensitive.txt  → %d URLs", len(v)))
+
+	wg.Add(4)
+
+	// Query 1: Main domain
+	go func() {
+		defer wg.Done()
+		logInfo("[1/4] Main domain → " + q1)
+		v, err := cdxGet(q1)
+		if err != nil {
+			addError(fmt.Errorf("CDX main: %w", err))
+			return
+		}
+		mainURLs = v
+		logOK(fmt.Sprintf("wayback_main.txt       → %d URLs", len(v)))
+	}()
+
+	// Query 2: Wildcard domain
+	go func() {
+		defer wg.Done()
+		logInfo("[2/4] Wildcard     → " + q2)
+		v, err := cdxGet(q2)
+		if err != nil {
+			addError(fmt.Errorf("CDX wildcard: %w", err))
+			return
+		}
+		wildcardURLs = v
+		logOK(fmt.Sprintf("wayback_wildcard.txt   → %d URLs", len(v)))
+	}()
+
+	// Query 3: Specific path
+	go func() {
+		defer wg.Done()
+		logInfo("[3/4] Specific     → " + q3)
+		v, err := cdxGet(q3)
+		if err != nil {
+			addError(fmt.Errorf("CDX specific: %w", err))
+			return
+		}
+		specificURLs = v
+		logOK(fmt.Sprintf("wayback_specific.txt   → %d URLs", len(v)))
+	}()
+
+	// Query 4: Sensitive file extensions
+	go func() {
+		defer wg.Done()
+		logInfo("[4/4] Sensitive    → " + q4)
+		v, err := cdxGet(q4)
+		if err != nil {
+			addError(fmt.Errorf("CDX sensitive: %w", err))
+			return
+		}
+		sensitiveURLs = v
+		logOK(fmt.Sprintf("wayback_sensitive.txt  → %d URLs", len(v)))
+	}()
+
+	wg.Wait()
+
+	if len(errs) > 0 {
+		// Return the first encountered error
+		return res, errs[0]
+	}
+
+	res.Main = mainURLs
+	res.Wildcard = wildcardURLs
+	res.Specific = specificURLs
+	res.Sensitive = sensitiveURLs
 
 	return res, nil
 }
 
-// cdxGet performs one HTTP GET to the Wayback CDX API and returns lines.
+// cdxGet performs one HTTP GET to the Wayback CDX API, streaming response lines directly.
 func cdxGet(rawURL string) ([]string, error) {
-	client := &http.Client{Timeout: 300 * time.Second}
-	resp, err := client.Get(rawURL)
+	resp, err := waybackClient.Get(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var out []string
+	scanner := bufio.NewScanner(resp.Body)
+
+	// Setup a large buffer buffer capacity limit of 10MB just in case there are long lines
+	const maxCapacity = 10 * 1024 * 1024
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, maxCapacity)
+
+	for scanner.Scan() {
+		if line := strings.TrimSpace(scanner.Text()); line != "" {
+			out = append(out, line)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read: %w", err)
 	}
-	return nonEmptyLines(string(body)), nil
+
+	return out, nil
 }

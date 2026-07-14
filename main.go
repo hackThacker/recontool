@@ -6,7 +6,7 @@ package main
 //
 //	Author  : hackthacker
 //	GitHub  : https://github.com/hackthacker/recontool
-//	Version : 1.0.3
+//	Version : 1.0.4
 //
 //	COMMANDS:
 //	  recontool -d example.com          → full automated pipeline
@@ -26,9 +26,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -38,7 +42,7 @@ import (
 // ─────────────────────────────────────────────
 
 const (
-	toolVersion  = "1.0.3"
+	toolVersion  = "1.0.4"
 	toolName     = "ReconTool"
 	toolAuthor   = "hackthacker"
 	toolGitHub   = "https://github.com/hackthacker/recontool"
@@ -130,18 +134,167 @@ func printVersion() {
 }
 
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
 // Update checker
 // ─────────────────────────────────────────────
 
+type githubAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
 type githubRelease struct {
-	TagName string `json:"tag_name"`
-	HTMLURL string `json:"html_url"`
-	Name    string `json:"name"`
+	TagName string        `json:"tag_name"`
+	HTMLURL string        `json:"html_url"`
+	Name    string        `json:"name"`
+	Assets  []githubAsset `json:"assets"`
+}
+
+// semver comparison functions
+func parseSemver(v string) (major, minor, patch int, ok bool) {
+	v = strings.TrimPrefix(v, "v")
+	parts := strings.Split(v, ".")
+	if len(parts) < 3 {
+		return 0, 0, 0, false
+	}
+	var err error
+	major, err = strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	minor, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	patchPart := parts[2]
+	if idx := strings.IndexAny(patchPart, "-+"); idx != -1 {
+		patchPart = patchPart[:idx]
+	}
+	patch, err = strconv.Atoi(patchPart)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return major, minor, patch, true
+}
+
+func isNewerVersion(current, latest string) bool {
+	maj1, min1, pat1, ok1 := parseSemver(current)
+	maj2, min2, pat2, ok2 := parseSemver(latest)
+	if !ok1 || !ok2 {
+		return current != latest
+	}
+	if maj2 > maj1 {
+		return true
+	}
+	if maj2 < maj1 {
+		return false
+	}
+	if min2 > min1 {
+		return true
+	}
+	if min2 < min1 {
+		return false
+	}
+	return pat2 > pat1
+}
+
+func findMatchingAsset(assets []githubAsset, osName, archName string) (githubAsset, bool) {
+	for _, asset := range assets {
+		name := strings.ToLower(asset.Name)
+
+		matchesOS := false
+		if osName == "darwin" {
+			if strings.Contains(name, "darwin") || strings.Contains(name, "macos") || strings.Contains(name, "osx") {
+				matchesOS = true
+			}
+		} else {
+			if strings.Contains(name, osName) {
+				matchesOS = true
+			}
+		}
+
+		matchesArch := false
+		if archName == "amd64" {
+			if strings.Contains(name, "amd64") || strings.Contains(name, "x86_64") || strings.Contains(name, "x64") {
+				matchesArch = true
+			}
+		} else if archName == "386" {
+			if strings.Contains(name, "386") || strings.Contains(name, "x86") || strings.Contains(name, "i386") {
+				matchesArch = true
+			}
+		} else {
+			if strings.Contains(name, archName) {
+				matchesArch = true
+			}
+		}
+
+		if matchesOS && matchesArch {
+			return asset, true
+		}
+	}
+	return githubAsset{}, false
+}
+
+func replaceExecutable(newBytes []byte) error {
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("could not get executable path: %w", err)
+	}
+
+	dir := filepath.Dir(execPath)
+
+	// Create temporary file in the same directory
+	tmpFile, err := os.CreateTemp(dir, "recontool_update_*")
+	if err != nil {
+		return fmt.Errorf("could not create temporary file: %w", err)
+	}
+	tmpName := tmpFile.Name()
+	defer func() {
+		_ = os.Remove(tmpName)
+	}()
+
+	// Write the binary data
+	if _, err := tmpFile.Write(newBytes); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to write update bytes: %w", err)
+	}
+
+	// Make it executable
+	if err := tmpFile.Chmod(0755); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to set executable permissions: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary file: %w", err)
+	}
+
+	// Replace the running executable safely
+	if runtime.GOOS == "windows" {
+		oldPath := execPath + ".old"
+		_ = os.Remove(oldPath)
+
+		if err := os.Rename(execPath, oldPath); err != nil {
+			return fmt.Errorf("permission denied or failed renaming running executable: %w", err)
+		}
+
+		if err := os.Rename(tmpName, execPath); err != nil {
+			// Restore original
+			_ = os.Rename(oldPath, execPath)
+			return fmt.Errorf("failed replacing executable with new binary: %w", err)
+		}
+	} else {
+		if err := os.Rename(tmpName, execPath); err != nil {
+			return fmt.Errorf("permission denied or failed replacing executable: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func checkUpdate() {
 	fmt.Printf("%s[UPDATE]%s Querying GitHub releases…\n", cCyan, cReset)
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 15 * time.Second}
 	req, _ := http.NewRequest("GET", latestAPIURL, nil)
 	req.Header.Set("User-Agent", toolName+"/"+toolVersion)
 
@@ -159,16 +312,63 @@ func checkUpdate() {
 	}
 
 	latest := strings.TrimPrefix(rel.TagName, "v")
-	fmt.Printf("  Installed : %s%s%s\n", cYellow, toolVersion, cReset)
-	fmt.Printf("  Latest    : %s%s%s\n", cGreen, latest, cReset)
-	if latest == toolVersion || latest == "" {
-		logOK("You are on the latest version.")
-	} else {
-		fmt.Printf("\n%s%s[NEW VERSION]%s %s → %s available!\n",
-			cBold, cGreen, cReset, toolVersion, latest)
-		fmt.Printf("  Download : %s%s%s\n", cBlue, rel.HTMLURL, cReset)
+	current := strings.TrimPrefix(toolVersion, "v")
 
-		logInfo("Updating to version v" + latest + "...")
+	if !isNewerVersion(current, latest) {
+		fmt.Printf("Installed : v%s\n", current)
+		fmt.Printf("Latest    : v%s\n", latest)
+		fmt.Println("Already up to date.")
+		os.Exit(0)
+	}
+
+	// Newer version exists
+	logInfo("New version available: v" + latest)
+
+	// Try to find matching precompiled release asset
+	osName := runtime.GOOS
+	archName := runtime.GOARCH
+	asset, found := findMatchingAsset(rel.Assets, osName, archName)
+
+	if found {
+		logInfo("Downloading precompiled release binary for " + osName + "/" + archName + "...")
+		logInfo("URL: " + asset.BrowserDownloadURL)
+
+		dResp, err := client.Get(asset.BrowserDownloadURL)
+		if err != nil {
+			logErr("Download request failed: " + err.Error())
+			os.Exit(1)
+		}
+		defer dResp.Body.Close()
+
+		if dResp.StatusCode != http.StatusOK {
+			logErr(fmt.Sprintf("Download failed with HTTP status code: %d", dResp.StatusCode))
+			os.Exit(1)
+		}
+
+		newBytes, err := io.ReadAll(dResp.Body)
+		if err != nil {
+			logErr("Failed to read downloaded binary: " + err.Error())
+			os.Exit(1)
+		}
+
+		logInfo("Installing update...")
+		if err := replaceExecutable(newBytes); err != nil {
+			if os.IsPermission(err) || strings.Contains(strings.ToLower(err.Error()), "permission denied") || strings.Contains(strings.ToLower(err.Error()), "access is denied") {
+				logErr("Permission Denied: Administrator or root privileges are required to replace the binary.")
+				if runtime.GOOS == "windows" {
+					logInfo("Please run your terminal (PowerShell/CMD) as Administrator and try again.")
+				} else {
+					logInfo("Please run: sudo recontool -u")
+				}
+			} else {
+				logErr("Update failed: " + err.Error())
+			}
+			os.Exit(1)
+		}
+	} else {
+		// Fallback to "go install" if no release assets matched
+		logWarn("No precompiled release asset found for " + osName + "/" + archName)
+		logInfo("Falling back to compiling from source via 'go install'...")
 		cmd := exec.Command("go", "install", "-v", "github.com/hackthacker/recontool@latest")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -177,8 +377,11 @@ func checkUpdate() {
 			logInfo("Please update manually: go install -v github.com/hackthacker/recontool@latest")
 			os.Exit(1)
 		}
-		logOK("Successfully updated to v" + latest + "! Run 'recontool' to start the new version.")
 	}
+
+	fmt.Println("Updated successfully!")
+	fmt.Printf("Old Version : v%s\n", current)
+	fmt.Printf("New Version : v%s\n", latest)
 	os.Exit(0)
 }
 

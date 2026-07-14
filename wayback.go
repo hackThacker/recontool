@@ -127,84 +127,28 @@ func RunWaybackCDX(domain string, folder string) (WaybackResult, error) {
 	go func() {
 		defer wg.Done()
 		logInfo("[1/4] Main domain → " + q1)
-		v, err := cdxGet(q1)
-		if err != nil {
-			err = fmt.Errorf("CDX main: %w", err)
-			logErr(err.Error())
-			addError(err)
-			return
-		}
-		mainURLs = v
-
-		filePath := filepath.Join(folder, "wayback_main.txt")
-		if err := writeLines(filePath, v); err != nil {
-			logErr(fmt.Sprintf("Failed to write wayback_main.txt: %v", err))
-		} else {
-			logOK(fmt.Sprintf("wayback_main.txt       → %d URLs", len(v)))
-		}
+		mainURLs = runQuery("main", q1, "wayback_main.txt", folder, addError)
 	}()
 
 	// Query 2: Wildcard domain
 	go func() {
 		defer wg.Done()
 		logInfo("[2/4] Wildcard     → " + q2)
-		v, err := cdxGet(q2)
-		if err != nil {
-			err = fmt.Errorf("CDX wildcard: %w", err)
-			logErr(err.Error())
-			addError(err)
-			return
-		}
-		wildcardURLs = v
-
-		filePath := filepath.Join(folder, "wayback_wildcard.txt")
-		if err := writeLines(filePath, v); err != nil {
-			logErr(fmt.Sprintf("Failed to write wayback_wildcard.txt: %v", err))
-		} else {
-			logOK(fmt.Sprintf("wayback_wildcard.txt   → %d URLs", len(v)))
-		}
+		wildcardURLs = runQuery("wildcard", q2, "wayback_wildcard.txt", folder, addError)
 	}()
 
 	// Query 3: Specific path
 	go func() {
 		defer wg.Done()
 		logInfo("[3/4] Specific     → " + q3)
-		v, err := cdxGet(q3)
-		if err != nil {
-			err = fmt.Errorf("CDX specific: %w", err)
-			logErr(err.Error())
-			addError(err)
-			return
-		}
-		specificURLs = v
-
-		filePath := filepath.Join(folder, "wayback_specific.txt")
-		if err := writeLines(filePath, v); err != nil {
-			logErr(fmt.Sprintf("Failed to write wayback_specific.txt: %v", err))
-		} else {
-			logOK(fmt.Sprintf("wayback_specific.txt   → %d URLs", len(v)))
-		}
+		specificURLs = runQuery("specific", q3, "wayback_specific.txt", folder, addError)
 	}()
 
 	// Query 4: Sensitive file extensions
 	go func() {
 		defer wg.Done()
 		logInfo("[4/4] Sensitive    → " + q4)
-		v, err := cdxGet(q4)
-		if err != nil {
-			err = fmt.Errorf("CDX sensitive: %w", err)
-			logErr(err.Error())
-			addError(err)
-			return
-		}
-		sensitiveURLs = v
-
-		filePath := filepath.Join(folder, "wayback_sensitive.txt")
-		if err := writeLines(filePath, v); err != nil {
-			logErr(fmt.Sprintf("Failed to write wayback_sensitive.txt: %v", err))
-		} else {
-			logOK(fmt.Sprintf("wayback_sensitive.txt  → %d URLs", len(v)))
-		}
+		sensitiveURLs = runQuery("sensitive", q4, "wayback_sensitive.txt", folder, addError)
 	}()
 
 	wg.Wait()
@@ -219,6 +163,29 @@ func RunWaybackCDX(domain string, folder string) (WaybackResult, error) {
 	}
 
 	return res, nil
+}
+
+// runQuery runs a single CDX query, logs progress/errors, and ALWAYS writes the output file.
+func runQuery(queryName, url, filename, folder string, addError func(error)) []string {
+	filePath := filepath.Join(folder, filename)
+	v, err := cdxGet(url)
+	if err != nil {
+		err = fmt.Errorf("CDX %s: %w", queryName, err)
+		logErr(err.Error())
+		addError(err)
+		// ALWAYS create/truncate the output file as empty on failure
+		if wErr := writeLines(filePath, nil); wErr != nil {
+			logErr(fmt.Sprintf("Failed to create empty file %s: %v", filename, wErr))
+		}
+		return nil
+	}
+
+	if err := writeLines(filePath, v); err != nil {
+		logErr(fmt.Sprintf("Failed to write %s: %v", filename, err))
+	} else {
+		logOK(fmt.Sprintf("%-23s → %d URLs", filename, len(v)))
+	}
+	return v
 }
 
 // cdxGet performs one HTTP GET to the Wayback CDX API, streaming response lines directly.

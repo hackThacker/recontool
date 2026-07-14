@@ -6,7 +6,7 @@ package main
 //
 //	Author  : hackthacker
 //	GitHub  : https://github.com/hackthacker/recontool
-//	Version : 1.0.9
+//	Version : 1.1.0
 //
 //	COMMANDS:
 //	  recontool -d example.com          → full automated pipeline
@@ -44,7 +44,7 @@ import (
 // ─────────────────────────────────────────────
 
 const (
-	toolVersion  = "1.0.9"
+	toolVersion  = "1.1.0"
 	toolName     = "ReconTool"
 	toolAuthor   = "hackthacker"
 	toolGitHub   = "https://github.com/hackthacker/recontool"

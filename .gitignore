@@ -1,11 +1,13 @@
 # ── Binaries ──────────────────────────────────────────────────────────────────
 *.exe
 *.exe~
+*.exe.old
 *.dll
 *.so
 *.dylib
 recontool
 recontool.exe
+recontool.exe.old
 
 # ── Build output ──────────────────────────────────────────────────────────────
 /dist/

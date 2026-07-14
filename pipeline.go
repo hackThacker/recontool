@@ -152,21 +152,9 @@ func RunPipeline(opts PipelineOptions) {
 	if !opts.Silent {
 		logStep(fmt.Sprintf("[1/5] Wayback CDX – %s", domain))
 	}
-	wb, err := RunWaybackCDX(domain)
+	wb, err := RunWaybackCDX(domain, folder)
 	if err != nil {
-		logErr("Wayback: " + err.Error())
-	} else {
-		for _, pair := range []struct {
-			name  string
-			lines []string
-		}{
-			{"wayback_main.txt", wb.Main},
-			{"wayback_wildcard.txt", wb.Wildcard},
-			{"wayback_specific.txt", wb.Specific},
-			{"wayback_sensitive.txt", wb.Sensitive},
-		} {
-			_ = writeLines(filepath.Join(folder, pair.name), pair.lines)
-		}
+		logErr("Wayback stage failed completely: " + err.Error())
 	}
 	fmt.Println()
 

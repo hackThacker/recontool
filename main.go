@@ -6,7 +6,7 @@ package main
 //
 //	Author  : hackthacker
 //	GitHub  : https://github.com/hackthacker/recontool
-//	Version : 1.0.4
+//	Version : 1.0.5
 //
 //	COMMANDS:
 //	  recontool -d example.com          → full automated pipeline
@@ -42,7 +42,7 @@ import (
 // ─────────────────────────────────────────────
 
 const (
-	toolVersion  = "1.0.4"
+	toolVersion  = "1.0.5"
 	toolName     = "ReconTool"
 	toolAuthor   = "hackthacker"
 	toolGitHub   = "https://github.com/hackthacker/recontool"
@@ -239,6 +239,11 @@ func replaceExecutable(newBytes []byte) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("could not get executable path: %w", err)
+	}
+
+	// Resolve symlinks to find the actual target binary
+	if realPath, err := filepath.EvalSymlinks(execPath); err == nil {
+		execPath = realPath
 	}
 
 	dir := filepath.Dir(execPath)

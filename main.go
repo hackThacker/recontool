@@ -6,7 +6,7 @@ package main
 //
 //	Author  : hackthacker
 //	GitHub  : https://github.com/hackthacker/recontool
-//	Version : 1.0.2
+//	Version : 1.0.3
 //
 //	COMMANDS:
 //	  recontool -d example.com          → full automated pipeline
@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -37,7 +38,7 @@ import (
 // ─────────────────────────────────────────────
 
 const (
-	toolVersion  = "1.0.2"
+	toolVersion  = "1.0.3"
 	toolName     = "ReconTool"
 	toolAuthor   = "hackthacker"
 	toolGitHub   = "https://github.com/hackthacker/recontool"
@@ -166,6 +167,17 @@ func checkUpdate() {
 		fmt.Printf("\n%s%s[NEW VERSION]%s %s → %s available!\n",
 			cBold, cGreen, cReset, toolVersion, latest)
 		fmt.Printf("  Download : %s%s%s\n", cBlue, rel.HTMLURL, cReset)
+
+		logInfo("Updating to version v" + latest + "...")
+		cmd := exec.Command("go", "install", "-v", "github.com/hackthacker/recontool@latest")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			logErr("Update failed: " + err.Error())
+			logInfo("Please update manually: go install -v github.com/hackthacker/recontool@latest")
+			os.Exit(1)
+		}
+		logOK("Successfully updated to v" + latest + "! Run 'recontool' to start the new version.")
 	}
 	os.Exit(0)
 }

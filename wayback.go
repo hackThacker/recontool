@@ -97,7 +97,6 @@ var waybackClient = &http.Client{
 
 // RunWaybackCDX executes all 4 Wayback CDX queries for the domain concurrently and saves them to disk.
 func RunWaybackCDX(domain string, folder string) (WaybackResult, error) {
-	logStep("Wayback CDX API – 4 searches for: " + domain)
 	var res WaybackResult
 	base := "https://web.archive.org/cdx/search/cdx"
 
@@ -126,28 +125,24 @@ func RunWaybackCDX(domain string, folder string) (WaybackResult, error) {
 	// Query 1: Main domain
 	go func() {
 		defer wg.Done()
-		logInfo("[1/4] Main domain → " + q1)
 		mainURLs = runQuery("main", q1, "wayback_main.txt", folder, addError)
 	}()
 
 	// Query 2: Wildcard domain
 	go func() {
 		defer wg.Done()
-		logInfo("[2/4] Wildcard     → " + q2)
 		wildcardURLs = runQuery("wildcard", q2, "wayback_wildcard.txt", folder, addError)
 	}()
 
 	// Query 3: Specific path
 	go func() {
 		defer wg.Done()
-		logInfo("[3/4] Specific     → " + q3)
 		specificURLs = runQuery("specific", q3, "wayback_specific.txt", folder, addError)
 	}()
 
 	// Query 4: Sensitive file extensions
 	go func() {
 		defer wg.Done()
-		logInfo("[4/4] Sensitive    → " + q4)
 		sensitiveURLs = runQuery("sensitive", q4, "wayback_sensitive.txt", folder, addError)
 	}()
 
@@ -159,9 +154,11 @@ func RunWaybackCDX(domain string, folder string) (WaybackResult, error) {
 	res.Sensitive = sensitiveURLs
 
 	if len(errs) == 4 {
-		return res, fmt.Errorf("all 4 CDX queries failed completely: %v", errs)
+		logWarn("Wayback stage failed completely")
+		return res, fmt.Errorf("all 4 CDX queries failed")
 	}
 
+	logOK("Wayback completed")
 	return res, nil
 }
 
@@ -170,21 +167,16 @@ func runQuery(queryName, url, filename, folder string, addError func(error)) []s
 	filePath := filepath.Join(folder, filename)
 	v, err := cdxGet(url)
 	if err != nil {
-		err = fmt.Errorf("CDX %s: %w", queryName, err)
-		logErr(err.Error())
+		if strings.Contains(err.Error(), "429") {
+			logWarn("Wayback returned HTTP 429")
+		}
 		addError(err)
 		// ALWAYS create/truncate the output file as empty on failure
-		if wErr := writeLines(filePath, nil); wErr != nil {
-			logErr(fmt.Sprintf("Failed to create empty file %s: %v", filename, wErr))
-		}
+		_ = writeLines(filePath, nil)
 		return nil
 	}
 
-	if err := writeLines(filePath, v); err != nil {
-		logErr(fmt.Sprintf("Failed to write %s: %v", filename, err))
-	} else {
-		logOK(fmt.Sprintf("%-23s → %d URLs", filename, len(v)))
-	}
+	_ = writeLines(filePath, v)
 	return v
 }
 

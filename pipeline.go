@@ -150,12 +150,17 @@ func RunPipeline(opts PipelineOptions) {
 	// STEP 1 – WAYBACK CDX
 	// ══════════════════════════════════════════════════════════════════════
 	if !opts.Silent {
-		logStep(fmt.Sprintf("[1/5] Wayback CDX – %s", domain))
+		logStep("Wayback CDX API")
 	}
-	wb, err := RunWaybackCDX(domain, folder)
-	if err != nil {
-		logErr("Wayback stage failed completely: " + err.Error())
+	_, _ = RunWaybackCDX(domain, folder)
+
+	// ══════════════════════════════════════════════════════════════════════
+	// STEP 1.5 – CHAOS DATASET
+	// ══════════════════════════════════════════════════════════════════════
+	if !opts.Silent {
+		logStep("Chaos Dataset")
 	}
+	runChaosDataset(domain, folder)
 	fmt.Println()
 
 	// ══════════════════════════════════════════════════════════════════════
@@ -260,10 +265,14 @@ func RunPipeline(opts PipelineOptions) {
 	fmt.Printf("    ├── 3xx.txt                  (%d lines)\n", len(byFam["3xx"]))
 	fmt.Printf("    ├── 4xx.txt                  (%d lines)\n", len(byFam["4xx"]))
 	fmt.Printf("    ├── 5xx.txt                  (%d lines)\n", len(byFam["5xx"]))
-	fmt.Printf("    ├── wayback_main.txt          (%d lines)\n", len(wb.Main))
-	fmt.Printf("    ├── wayback_wildcard.txt      (%d lines)\n", len(wb.Wildcard))
-	fmt.Printf("    ├── wayback_specific.txt      (%d lines)\n", len(wb.Specific))
-	fmt.Printf("    └── wayback_sensitive.txt     (%d lines)\n", len(wb.Sensitive))
+	fileLines := func(name string) int {
+		lines, _ := readLines(filepath.Join(folder, name))
+		return len(lines)
+	}
+	fmt.Printf("    ├── wayback_main.txt          (%d lines)\n", fileLines("wayback_main.txt"))
+	fmt.Printf("    ├── wayback_wildcard.txt      (%d lines)\n", fileLines("wayback_wildcard.txt"))
+	fmt.Printf("    ├── wayback_specific.txt      (%d lines)\n", fileLines("wayback_specific.txt"))
+	fmt.Printf("    └── wayback_sensitive.txt     (%d lines)\n", fileLines("wayback_sensitive.txt"))
 	fmt.Printf("  Time    : %s\n", elapsed)
 	fmt.Println(cGreen + cBold + "═════════════════════════════════════════════════════════" + cReset)
 }

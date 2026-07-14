@@ -6,7 +6,7 @@ package main
 //
 //	Author  : hackthacker
 //	GitHub  : https://github.com/hackthacker/recontool
-//	Version : 1.0.8
+//	Version : 1.0.9
 //
 //	COMMANDS:
 //	  recontool -d example.com          → full automated pipeline
@@ -24,6 +24,8 @@ package main
 // ─────────────────────────────────────────────────────────────────────────────
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,7 +44,7 @@ import (
 // ─────────────────────────────────────────────
 
 const (
-	toolVersion  = "1.0.8"
+	toolVersion  = "1.0.9"
 	toolName     = "ReconTool"
 	toolAuthor   = "hackthacker"
 	toolGitHub   = "https://github.com/hackthacker/recontool"
@@ -297,6 +299,26 @@ func replaceExecutable(newBytes []byte) error {
 	return nil
 }
 
+func extractBinaryFromZip(zipBytes []byte, binaryName string) ([]byte, error) {
+	r, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return nil, fmt.Errorf("read zip: %w", err)
+	}
+
+	for _, f := range r.File {
+		cleanName := filepath.Base(f.Name)
+		if strings.EqualFold(cleanName, binaryName) || strings.EqualFold(cleanName, binaryName+".exe") {
+			rc, err := f.Open()
+			if err != nil {
+				return nil, fmt.Errorf("open zip entry %s: %w", f.Name, err)
+			}
+			defer rc.Close()
+			return io.ReadAll(rc)
+		}
+	}
+	return nil, fmt.Errorf("binary %s not found in zip archive", binaryName)
+}
+
 func checkUpdate() {
 	fmt.Printf("%s[UPDATE]%s Querying GitHub releases…\n", cCyan, cReset)
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -350,14 +372,25 @@ func checkUpdate() {
 			os.Exit(1)
 		}
 
-		newBytes, err := io.ReadAll(dResp.Body)
+		zipBytes, err := io.ReadAll(dResp.Body)
 		if err != nil {
 			logErr("Failed to read downloaded binary: " + err.Error())
 			os.Exit(1)
 		}
 
+		// Since our release artifacts are ZIP archives, extract the binary from the ZIP
+		binaryName := "recontool"
+		if runtime.GOOS == "windows" {
+			binaryName = "recontool"
+		}
+		extractedBytes, err := extractBinaryFromZip(zipBytes, binaryName)
+		if err != nil {
+			logErr("Failed to extract binary from update ZIP: " + err.Error())
+			os.Exit(1)
+		}
+
 		logInfo("Installing update...")
-		if err := replaceExecutable(newBytes); err != nil {
+		if err := replaceExecutable(extractedBytes); err != nil {
 			if os.IsPermission(err) || strings.Contains(strings.ToLower(err.Error()), "permission denied") || strings.Contains(strings.ToLower(err.Error()), "access is denied") {
 				logErr("Permission Denied: Administrator or root privileges are required to replace the binary.")
 				if runtime.GOOS == "windows" {

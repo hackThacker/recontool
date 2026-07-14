@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 )
 
 type ChaosItem struct {
@@ -67,18 +69,40 @@ func runChaosDataset(domain, folder string) {
 }
 
 func getDomainNameWithoutTLD(domain string) string {
-	parts := strings.Split(domain, ".")
-	if len(parts) > 1 {
-		last := parts[len(parts)-1]
-		penultimate := parts[len(parts)-2]
-		if len(last) == 2 && (penultimate == "co" || penultimate == "org" || penultimate == "net" || penultimate == "gov" || penultimate == "ac") {
-			if len(parts) > 2 {
-				return parts[len(parts)-3]
-			}
-		}
-		return parts[len(parts)-2]
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	for _, prefix := range []string{"https://", "http://"} {
+		domain = strings.TrimPrefix(domain, prefix)
 	}
-	return domain
+	domain = strings.TrimSuffix(domain, "/")
+	domain = strings.TrimPrefix(domain, "www.")
+
+	etld1, err := publicsuffix.EffectiveTLDPlusOne(domain)
+	if err != nil {
+		// Fallback to basic dot split logic if error
+		parts := strings.Split(domain, ".")
+		if len(parts) > 1 {
+			last := parts[len(parts)-1]
+			penultimate := parts[len(parts)-2]
+			if len(last) == 2 && (penultimate == "co" || penultimate == "org" || penultimate == "net" || penultimate == "gov" || penultimate == "ac") {
+				if len(parts) > 2 {
+					return parts[len(parts)-3]
+				}
+			}
+			return parts[len(parts)-2]
+		}
+		return domain
+	}
+
+	suffix, _ := publicsuffix.PublicSuffix(etld1)
+	if suffix != "" {
+		return strings.TrimSuffix(etld1, "."+suffix)
+	}
+
+	parts := strings.Split(etld1, ".")
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return etld1
 }
 
 func downloadAndUnzip(zipURL, destDir string) error {
@@ -138,22 +162,64 @@ func downloadAndUnzip(zipURL, destDir string) error {
 			return fmt.Errorf("create parent dir: %w", err)
 		}
 
+		// Read the content of the zip file entry
+		rc, err := f.Open()
+		if err != nil {
+			return fmt.Errorf("open zip entry: %w", err)
+		}
+		zipBytes, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			return fmt.Errorf("read zip entry: %w", err)
+		}
+
+		var finalBytes []byte
+		isText := strings.HasSuffix(strings.ToLower(f.Name), ".txt")
+
+		if isText {
+			if _, err := os.Stat(fPath); err == nil {
+				// File exists, merge and deduplicate lines
+				existingBytes, err := os.ReadFile(fPath)
+				if err == nil {
+					linesMap := make(map[string]bool)
+					existingStr := string(existingBytes)
+					for _, line := range strings.Split(existingStr, "\n") {
+						line = strings.TrimSpace(line)
+						if line != "" {
+							linesMap[line] = true
+						}
+					}
+					zipStr := string(zipBytes)
+					for _, line := range strings.Split(zipStr, "\n") {
+						line = strings.TrimSpace(line)
+						if line != "" {
+							linesMap[line] = true
+						}
+					}
+
+					var mergedLines []string
+					for line := range linesMap {
+						mergedLines = append(mergedLines, line)
+					}
+					finalBytes = []byte(strings.Join(mergedLines, "\n") + "\n")
+				} else {
+					finalBytes = zipBytes
+				}
+			} else {
+				finalBytes = zipBytes
+			}
+		} else {
+			finalBytes = zipBytes
+		}
+
 		outFile, err := os.OpenFile(fPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 		if err != nil {
 			return fmt.Errorf("open output file: %w", err)
 		}
-
-		rc, err := f.Open()
-		if err != nil {
-			outFile.Close()
-			return fmt.Errorf("open zip entry: %w", err)
-		}
-
-		_, err = io.Copy(outFile, rc)
-		rc.Close()
+		_, err = outFile.Write(finalBytes)
 		outFile.Close()
 		if err != nil {
-			return fmt.Errorf("copy zip entry: %w", err)
+			return fmt.Errorf("write output file: %w", err)
 		}
 	}
 

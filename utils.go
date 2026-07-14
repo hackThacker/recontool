@@ -25,9 +25,9 @@ const (
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 func logInfo(msg string) { fmt.Println(cCyan + "[INFO] " + cReset + msg) }
-func logOK(msg string)   { fmt.Println(cGreen + "[ OK ] " + cReset + msg) }
-func logWarn(msg string) { fmt.Println(cYellow + "[WARN] " + cReset + msg) }
-func logErr(msg string)  { fmt.Println(cRed + "[ERR ] " + cReset + msg) }
+func logOK(msg string)   { fmt.Println(cGreen + "[SUCCESS] " + cReset + msg) }
+func logWarn(msg string) { fmt.Println(cYellow + "[WARNING] " + cReset + msg) }
+func logErr(msg string)  { fmt.Println(cRed + "[ERR] " + cReset + msg) }
 func logStep(msg string) { fmt.Println(cMag + cBold + "[STEP] " + cReset + cBold + msg + cReset) }
 
 // ── Domain ────────────────────────────────────────────────────────────────────

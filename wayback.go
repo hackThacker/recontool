@@ -89,7 +89,7 @@ func RunWaybackCDX(domain string) (WaybackResult, error) {
 
 // cdxGet performs one HTTP GET to the Wayback CDX API and returns lines.
 func cdxGet(rawURL string) ([]string, error) {
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Get(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("HTTP: %w", err)

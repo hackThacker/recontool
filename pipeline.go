@@ -109,6 +109,26 @@ func CmdScan(args []string) {
 
 // RunPipeline executes the full automated recon pipeline.
 func RunPipeline(opts PipelineOptions) {
+	// Apply robust defaults for zero/uninitialized options (e.g. in interactive mode)
+	if opts.SubfinderTimeout <= 0 {
+		opts.SubfinderTimeout = 30
+	}
+	if opts.SubfinderThreads <= 0 {
+		opts.SubfinderThreads = 10
+	}
+	if opts.HTTPXThreads <= 0 {
+		opts.HTTPXThreads = 50
+	}
+	if opts.HTTPXTimeout <= 0 {
+		opts.HTTPXTimeout = 10
+	}
+	if opts.UncoverLimit <= 0 {
+		opts.UncoverLimit = 100
+	}
+	if opts.UncoverEngine == "" {
+		opts.UncoverEngine = "shodan"
+	}
+
 	domain := opts.Domain
 
 	// ── Create output folder ──────────────────────────────────────────────
